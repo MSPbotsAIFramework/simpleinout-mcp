@@ -12,8 +12,6 @@ services:
     env_file:
       - .env
     environment:
-      - MCP_TRANSPORT=http
       - MCP_HTTP_PORT=8080
-      - AUTH_MODE=${AUTH_MODE:-gateway}
 
 volumes: {}

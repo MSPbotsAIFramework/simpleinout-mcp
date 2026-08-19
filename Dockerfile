@@ -32,10 +32,8 @@ COPY --from=builder --chown=simpleinout:simpleinout /app/src /app/src
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-ENV MCP_TRANSPORT=http
 ENV MCP_HTTP_PORT=8080
 ENV MCP_HTTP_HOST=0.0.0.0
-ENV AUTH_MODE=gateway
 
 USER simpleinout
 

@@ -1,6 +1,4 @@
 import contextvars
-import sys
-from collections.abc import Callable
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -11,28 +9,34 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from .api_client import SimpleInOutClient
 from .config import Settings
 
+# Per-request credential isolation via contextvars.
+# GatewayTokenMiddleware sets this before the MCP handler runs.
+# Python asyncio copies context per task, so concurrent requests from
+# different tenants are isolated from one another.
 _gateway_creds_var: contextvars.ContextVar[tuple[str, str, str] | None] = contextvars.ContextVar(
     "simpleinout_gateway_creds", default=None
 )
 
 
 def get_client_from_context(settings: Settings) -> SimpleInOutClient | None:
-    if settings.auth_mode == "gateway":
-        creds = _gateway_creds_var.get()
-        if creds is None:
-            return None
-        client_id, client_secret, refresh_token = creds
-    else:
-        client_id = settings.simpleinout_client_id
-        client_secret = settings.simpleinout_client_secret
-        refresh_token = settings.simpleinout_refresh_token
-
-    if not client_id or not client_secret or not refresh_token:
+    """Resolve the active SimpleInOutClient for the current request context."""
+    creds = _gateway_creds_var.get()
+    if creds is None:
         return None
+    client_id, client_secret, refresh_token = creds
     return SimpleInOutClient(client_id, client_secret, refresh_token)
 
 
 class GatewayTokenMiddleware:
+    """ASGI middleware.
+
+    Reads the three Simple In/Out credential headers (all required) from
+    request headers and stores them in the contextvar. Returns 401 if any
+    is missing on /mcp requests. Credentials never fall back to an
+    environment variable (SOP §3.1) — a request without all three headers
+    simply has no client available (see get_client_from_context).
+    """
+
     def __init__(self, app: ASGIApp, settings: Settings):
         self.app = app
         self.settings = settings
@@ -52,19 +56,17 @@ class GatewayTokenMiddleware:
         client_secret = request.headers.get(self.settings.simpleinout_client_secret_header.lower())
         refresh_token = request.headers.get(self.settings.simpleinout_refresh_token_header.lower())
         if not client_id or not client_secret or not refresh_token:
+            required = [
+                self.settings.simpleinout_client_id_header,
+                self.settings.simpleinout_client_secret_header,
+                self.settings.simpleinout_refresh_token_header,
+            ]
             response = JSONResponse(
                 {
                     "error": "Missing credentials",
-                    "message": (
-                        f"Gateway mode requires the {self.settings.simpleinout_client_id_header}, "
-                        f"{self.settings.simpleinout_client_secret_header}, and "
-                        f"{self.settings.simpleinout_refresh_token_header} headers"
-                    ),
-                    "required_headers": [
-                        self.settings.simpleinout_client_id_header,
-                        self.settings.simpleinout_client_secret_header,
-                        self.settings.simpleinout_refresh_token_header,
-                    ],
+                    "message": f"This server requires the {', '.join(required)} headers",
+                    "required_headers": required,
+                    "optional_headers": [],
                 },
                 status_code=401,
             )
@@ -79,34 +81,36 @@ class GatewayTokenMiddleware:
 
 
 def create_mcp_server(settings: Settings) -> FastMCP:
+    """Build the FastMCP server instance and register all Simple In/Out tools."""
+    # DNS-rebinding protection is a browser-oriented safeguard that rejects
+    # non-localhost Host headers with 421. Disable it so the server works
+    # correctly behind a reverse proxy or docker network.
     mcp = FastMCP(
         name="simpleinout-mcp",
+        instructions=(
+            "Simple In/Out is a staff in/out status board: employees check "
+            'in/out with a status ("in", "remote", "busy", "break", "out", '
+            '"sick", "vacation") and managers see live and historical status '
+            "across the company. Core entities: company, users (with roles "
+            "and group membership), and status history (per-user or "
+            "company-wide). Supporting config: groups, beacons (Bluetooth "
+            "presence), geofences, Wi-Fi networks (automatic presence "
+            "detection), announcements, and roles. Typical flow: "
+            "simpleinout_list_users or simpleinout_get_current_user to find "
+            "a person, then simpleinout_list_user_statuses or "
+            "simpleinout_list_my_statuses for their history; "
+            "simpleinout_create_my_status checks the caller in/out, "
+            "simpleinout_create_user_status changes someone else's status "
+            "on their behalf (needs permission). simpleinout_list_roles is "
+            "useful before creating/managing users since role_id is "
+            "required. list_* tools accept page/page_size. Every tool "
+            "except the two create_*_status tools is read-only."
+        ),
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
-    client_factory: Callable[[], SimpleInOutClient | None] = lambda: get_client_from_context(settings)
-
-    if not settings.has_credentials:
-        @mcp.tool()
-        async def simpleinout_test_connection() -> str:
-            """Test Simple In/Out API connection. Shows configuration requirements when credentials are missing."""
-            return (
-                "Error: Missing Simple In/Out credentials.\n\n"
-                "Set the required environment variables:\n"
-                "  SIMPLEINOUT_CLIENT_ID=...\n"
-                "  SIMPLEINOUT_CLIENT_SECRET=...\n"
-                "  SIMPLEINOUT_REFRESH_TOKEN=...\n\n"
-                "Or use gateway mode (per-request credentials):\n"
-                "  AUTH_MODE=gateway\n"
-                f"  Send headers: {settings.simpleinout_client_id_header}, "
-                f"{settings.simpleinout_client_secret_header}, {settings.simpleinout_refresh_token_header}"
-            )
-
-        print(
-            "Warning: No Simple In/Out credentials found. Only the diagnostic tool is available.",
-            file=sys.stderr,
-        )
-        return mcp
+    def client_factory() -> SimpleInOutClient | None:
+        return get_client_from_context(settings)
 
     from .tools import inout
 
