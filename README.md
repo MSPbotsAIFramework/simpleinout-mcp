@@ -117,15 +117,15 @@ curl http://localhost:8080/health
 
 No credentials are required for the health endpoint (it is a pure local liveness probe and does not call the Simple In/Out API).
 
-## HEADER 授权参数说明 (Authentication)
+## HEADER Authorization Parameters (Authentication)
 
 Every request to `/mcp` must include all three of the following HTTP headers:
 
-| Header | 类型 | 是否必填 | 默认值 | 枚举值 | 字段描述 | Example |
+| Header | Type | Required | Default | Allowed values | Description | Example |
 |---|---|---|---|---|---|---|
-| `X-SimpleInOut-Client-Id` | string | 是 | 无 | 无 | Simple In/Out OAuth2 client ID（发邮件到 help@simplymadeapps.com 申请） | `abc123def456` |
-| `X-SimpleInOut-Client-Secret` | string | 是 | 无 | 无 | Simple In/Out OAuth2 client secret | `xyz789uvw012` |
-| `X-SimpleInOut-Refresh-Token` | string | 是 | 无 | 无 | 一次性人工登录授权换出来的 refresh_token（本服务用它每次调用换新的 access_token，不需要 redirect_uri） | `osm5x33j2wd6rlsnwenrdrlgk1jpgsi5` |
+| `X-SimpleInOut-Client-Id` | string | Yes | None | None | Simple In/Out OAuth2 client ID (request it by emailing help@simplymadeapps.com) | `abc123def456` |
+| `X-SimpleInOut-Client-Secret` | string | Yes | None | None | Simple In/Out OAuth2 client secret | `xyz789uvw012` |
+| `X-SimpleInOut-Refresh-Token` | string | Yes | None | None | refresh_token obtained from a one-time manual login authorization (this service uses it on every call to obtain a new access_token; no redirect_uri is needed) | `osm5x33j2wd6rlsnwenrdrlgk1jpgsi5` |
 
 Missing any of the three headers returns `401 Unauthorized` with the list of required header names in the response body.
 
@@ -173,7 +173,7 @@ Connect your MCP client with:
 
 All tools are read-only except `simpleinout_create_my_status` and `simpleinout_create_user_status`. `page_size` on the `list_groups`/`list_beacons`/`list_fences`/`list_networks`/`list_announcements` tools is clamped server-side to 200 (Simple In/Out's docs specify a default of 25 but do not document a hard maximum, so the SOP's fallback ceiling is used).
 
-## 测试示例 (Test Example)
+## Test Example
 
 ```bash
 curl -X POST http://localhost:8080/mcp \
